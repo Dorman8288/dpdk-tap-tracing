@@ -26,8 +26,8 @@ git clone https://github.com/DPDK/dpdk.git
 cd dpdk
 meson setup --buildtype=debug -Dexamples=all debugbuildtrace
 cd debugbuildtrace
-meson configure -Dc_args="-finstrument-functions"
-ninja
+meson configure -Dc_args="-finstrument-functions" -Dcpp_args="-finstrument-functions"
+ninja -C debugbuildtrace
 ```
 
 ## 🧠 Mount HugePages
@@ -49,6 +49,7 @@ echo 2048 | sudo tee /proc/sys/vm/nr_hugepages
 ```bash
 sudo LD_PRELOAD=/usr/lib/x86_64-linux-gnu/liblttng-ust-cyg-profile.so ./dpdk-testpmd -l 0-1 --proc-type=primary --file-prefix=pmd1 --vdev=net_memif,role=server -- -i
 sudo LD_PRELOAD=/usr/lib/x86_64-linux-gnu/liblttng-ust-cyg-profile.so ./dpdk-testpmd -l 2-3 --proc-type=primary --file-prefix=pmd2 --vdev=net_memif -- -i
+```
 
 ## 🔍 Enable LTTng Tracing
 
