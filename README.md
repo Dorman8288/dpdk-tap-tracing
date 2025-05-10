@@ -1,25 +1,30 @@
 # DPDK Tracing with LTTng
 
-This project provides a step-by-step guide to building and tracing DPDK applications using LTTng. The focus is on enabling function-level tracing to analyze DPDK behavior during runtime.
+This project focuses on enabling **LTTng** (Linux Trace Toolkit Next Generation) function tracing on **DPDK** (Data Plane Development Kit) by building it against the `liblttng-ust-cyg-profile.so` shared library.This library enables lttng to trace every function call by raising an event at the start and end of every fucntion in the compiled binary. We will collect function-level traces during the execution of different **testpmd scenarios**, including initial setup and traffic forwarding. After collecting the traces, we will analyze them using **TraceCompass**, focusing on metrics like **latency**, **function frequency**, and **cache/cycles/instructions** from function entry to exit.
+
+The steps include:
+
+1. Setting up LTTng and dpdk.
+2. Running **testpmd** commands with function tracing enabled.
+3. Analyzing trace data using **TraceCompass**.
+
 
 ## 📦 Prerequisites
+* **DPDK**: The Data Plane Development Kit for high-performance networking. you can clone this from https://github.com/DPDK/dpdk.
+* **LTTng**: The Linux Trace Toolkit to collect traces of userspace applications. it is available in most major distributions.
+* **TraceCompass**: A tool to analyze trace files collected by LTTng.you can get a  binary for your operating system at https://projects.eclipse.org/projects/tools.tracecompass/downloads
 
-Ensure the following packages are installed:
+Make sure you have the following installed:
 
-```bash
-sudo apt update
-sudo apt install -y meson ninja-build build-essential libnuma-dev libpcap-dev libelf-dev libjansson-dev libtool libtool-bin pkg-config
-```
+* DPDK (more information on the installation method below.)
+* LTTng
+* TraceCompass
+* A Linux environment (Ubuntu or similar is recommended, but the traces have been captured on a device running gentoo with 6.12.16 kernel)
 
-Install LTTng and related tools:
-
-```bash
-sudo apt install -y lttng-tools lttng-modules-dkms babeltrace
-```
 
 ## 🔧 Build DPDK with Function Instrumentation
 
-Clone and build DPDK with `-finstrument-functions` flag to enable function tracing:
+To enable LTTng function tracing, you need to build DPDK against the `liblttng-ust-cyg-profile.so` shared library.
 
 ```bash
 git clone https://github.com/DPDK/dpdk.git
@@ -44,117 +49,85 @@ You can also enable hugepages at boot or dynamically allocate them:
 ```bash
 echo 2048 | sudo tee /proc/sys/vm/nr_hugepages
 ```
-
-## 🚀 Run DPDK Application
-```bash
-sudo LD_PRELOAD=/usr/lib/x86_64-linux-gnu/liblttng-ust-cyg-profile.so ./dpdk-testpmd -l 0-1 --proc-type=primary --file-prefix=pmd1 --vdev=net_memif,role=server -- -i
-sudo LD_PRELOAD=/usr/lib/x86_64-linux-gnu/liblttng-ust-cyg-profile.so ./dpdk-testpmd -l 2-3 --proc-type=primary --file-prefix=pmd2 --vdev=net_memif -- -i
-```
-
 ## 🔍 Enable LTTng Tracing
 
-Create a new LTTng tracing session and enable function instrumentation with this script file:
+ **Create a Trace script**:
 
-```bash
-#!/bin/bash
+   ```bash
+   #!/bin/bash
+    
+    set -e
+    
+    trap error_handler ERR
+    
+    rm -rf output && mkdir output
+    
+    lttng create session1 --output=./output
+    
+    lttng enable-channel --userspace --num-subbuf=4 --subbuf-size=64M channel0
+    
+    lttng enable-event --channel channel0 --userspace --all
+    lttng add-context --channel channel0 --userspace --type="procname"
+    lttng add-context --channel channel0 --userspace --type="vtid"
+    lttng add-context --channel channel0 --userspace --type="vpid"
+    lttng add-context --channel channel0 --userspace --type="perf:thread:cpu-cycles"
+    lttng add-context --channel channel0 --userspace --type="perf:thread:instructions"
+    lttng add-context --channel channel0 --userspace --type="perf:thread:cache-misses"
+    
+    lttng start
+    
+    sleep 0.25 
+    
+    lttng destroy
 
-set -e
+   ```
+  the time delay should be low because the throughput of events is pretty high and it can overload the system pretty quickly if left uncheked.
 
-error_handler()
-{
-        echo -e "An error occured in the script\n"
-        lttng destroy
-        exit 1
-}
-
-if [ "$(id -u)" -ne 0 ];
-then
-        echo -e "permission denied.\nneeds root previlliged" >&2
-        exit 1
-fi
-
-trap error_handler ERR
-
-rm -rf output && mkdir output
-
-lttng create session1 --output=./output
-
-lttng enable-channel --userspace --num-subbuf=4 --subbuf-size=64M channel0
-
-lttng enable-event --channel channel0 --userspace --all
-
-for context in 'procname' 'vtid' 'vpid' 'perf:thread:cpu-cycles' 'perf:thread:instructions' 'perf:thread:cache-misses'; 
-# for context in 'procname' 'vtid' 'vpid' 'perf:thread:instructions'; 
-do
-        lttng add-context --channel channel0 --userspace --type="$context"
-done
-
-lttng start
-
-sleep 0.25
-
-lttng destroy
-
-```
+---
 
 ## 🚀 Run DPDK Application
-```bash
-lttng stop
-lttng destroy
-```
 
-## 📊 View Traces
+Now, run **DPDK testpmd** with LTTng function tracing enabled.
 
-Use `tracecompass` to read and analyze the trace logs:
+### Example Commands:
+
+Run DPDK in **server mode** on cores `0-1`:
 
 ```bash
-sudo .location_of_tracecompass/tracecompass
+export LD_PRELOAD=/usr/lib64/liblttng-ust-cyg-profile.so
+
+/home/amdor/code/kernel_function_tracing/project/dpdk/build/app/dpdk-testpmd -l 0-1 --proc-type=primary --file-prefix=pmd1 --vdev=net_memif,role=server -- -i
 ```
 
-## 📂 Project Structure
-
-```
-.
-├── dpdk/                    # Cloned DPDK source
-│   └── debugbuildtrace/    # Build directory with instrumented binaries
-├── README.md                # This file
-```
-
-## 🧪 Optional: Save to Script
-
-You can automate the steps using a Bash script:
+Run DPDK in **client mode** on cores `2-3`:
 
 ```bash
-#!/bin/bash
+export LD_PRELOAD=/usr/lib64/liblttng-ust-cyg-profile.so
 
-# Build DPDK
-git clone https://github.com/DPDK/dpdk.git
-cd dpdk
-meson setup --buildtype=debug -Dexamples=all debugbuildtrace
-cd debugbuildtrace
-meson configure -Dc_args="-finstrument-functions"
-ninja
-
-# Mount hugepages
-sudo mkdir -p /mnt/huge
-sudo mount -t hugetlbfs nodev /mnt/huge
-echo 2048 | sudo tee /proc/sys/vm/nr_hugepages
-
-# Start LTTng tracing
-lttng create dpdk-trace
-lttng enable-event -k --function '*'
-lttng start
-
-# Run your app (change this as needed)
-sudo ./examples/dpdk-l2fwd
-
-# Stop tracing
-lttng stop
-lttng destroy
+/home/amdor/code/kernel_function_tracing/project/dpdk/build/app/dpdk-testpmd  -l 2-3 --proc-type=primary --file-prefix=pmd2 --vdev=net_memif -- -i
 ```
 
-## 📬 Contact
+now do the steps blow in the defined order
 
-For issues or improvements, feel free to open an issue or pull request.
+ 1. run start on client
+ 2. run start tx_first on server
+ 3. check that the packets are flowing through the network using command "show port stats 0"
+ 4. run the trace script
+ 5. quit the server and client.
+---
 
+## 📊 Analyze the Results
+
+
+---
+
+## Conclusion
+
+
+---
+
+## References
+
+
+---
 
