@@ -105,10 +105,10 @@ lttng destroy
 
 ## 📊 View Traces
 
-Use `babeltrace` to read and analyze the trace logs:
+Use `tracecompass` to read and analyze the trace logs:
 
 ```bash
-babeltrace ~/lttng-traces/dpdk-trace-*
+sudo .location_of_tracecompass/tracecompass
 ```
 
 ## 📂 Project Structure
