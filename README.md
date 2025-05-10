@@ -117,8 +117,12 @@ now do the steps blow in the defined order
 ---
 
 ## 📊 Analyze the Results
-
-
+![Alt text](./1l.png)
+![Alt text](./2.png)
+![Alt text](./3.png)
+![Alt text](./4.png)
+![Alt text](./5.png)
+![Alt text](./6.png)
 ---
 
 ## Conclusion
