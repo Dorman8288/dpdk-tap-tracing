@@ -1,162 +1,159 @@
 # DPDK Tracing with LTTng
 
-This project demonstrates how to build DPDK with function-level tracing enabled using `-finstrument-functions`, set up hugepages, and trace function calls with **LTTng**.
-
----
-
-## 1️⃣ Build DPDK with `-finstrument-functions`
-
-```bash
-git clone https://github.com/DPDK/dpdk.git
-cd dpdk
-sudo meson setup builddir --buildtype=debug -Dexamples=all -Dc_args='-finstrument-functions'
-sudo ninja -C builddir
-2️⃣ Mount HugePages
-bash
-Copy
-Edit
-sudo mkdir -p /mnt/huge
-echo 1024 | sudo tee /proc/sys/vm/nr_hugepages
-sudo mount -t hugetlbfs nodev /mnt/huge
-3️⃣ Run LTTng and Trace Functions
-bash
-Copy
-Edit
-sudo apt install lttng-tools lttng-modules-dkms liblttng-ust-dev
-
-lttng create dpdk-trace
-lttng enable-event -u -a
-lttng start
-
-./builddir/examples/dpdk-l2fwd &
-
-sleep 5
-
-lttng stop
-lttng view
-📌 Notes
-Traces will be stored under .lttng/. Use tools like Trace Compass to analyze them.
-
-yaml
-Copy
-Edit
-
----
-
-اگر خواستی، فایل نهایی `README.md` رو همینجا کامل برات بسازم تا فقط copy/paste کنی. بگم بنویسم؟
-
-
-
-
-
-
-You said:
-اره فایل کاملشو بنویس
-ChatGPT said:
-حتماً، در ادامه یک فایل کامل README.md برای پروژه‌ی DPDK + Tracing با LTTng برات نوشتم. فقط کافیه اونو در پروژه‌ات ذخیره کنی به‌نام README.md.
-
-markdown
-Copy
-Edit
-# DPDK Tracing with LTTng
-
-This project demonstrates how to build [DPDK](https://www.dpdk.org/) with function-level tracing using `-finstrument-functions`, mount hugepages, and trace execution using [LTTng](https://lttng.org/).
-
----
+This project provides a step-by-step guide to building and tracing DPDK applications using LTTng. The focus is on enabling function-level tracing to analyze DPDK behavior during runtime.
 
 ## 📦 Prerequisites
 
-- Ubuntu 20.04 or later
-- Git
-- Meson and Ninja
-- GCC or Clang
-- LTTng tools and userspace tracing support
-
-Install essentials:
+Ensure the following packages are installed:
 
 ```bash
 sudo apt update
-sudo apt install git build-essential meson ninja-build \
-lttng-tools lttng-modules-dkms liblttng-ust-dev \
-python3-pyelftools
-1️⃣ Build DPDK with -finstrument-functions
-Clone and build DPDK with tracing flags enabled:
+sudo apt install -y meson ninja-build build-essential libnuma-dev libpcap-dev libelf-dev libjansson-dev libtool libtool-bin pkg-config
+```
 
-bash
-Copy
-Edit
+Install LTTng and related tools:
+
+```bash
+sudo apt install -y lttng-tools lttng-modules-dkms babeltrace
+```
+
+## 🔧 Build DPDK with Function Instrumentation
+
+Clone and build DPDK with `-finstrument-functions` flag to enable function tracing:
+
+```bash
 git clone https://github.com/DPDK/dpdk.git
 cd dpdk
+meson setup --buildtype=debug -Dexamples=all debugbuildtrace
+cd debugbuildtrace
+meson configure -Dc_args="-finstrument-functions"
+ninja
+```
 
-sudo meson setup builddir \
-  --buildtype=debug \
-  -Dexamples=all \
-  -Dc_args='-finstrument-functions'
+## 🧠 Mount HugePages
 
-sudo ninja -C builddir
-🔧 The -finstrument-functions flag enables automatic calls to __cyg_profile_func_enter and __cyg_profile_func_exit at every function entry/exit — allowing tracing via tools like LTTng.
+DPDK requires hugepages for memory allocation. Run:
 
-2️⃣ Mount HugePages
-DPDK requires hugepages for high-speed memory allocation:
-
-bash
-Copy
-Edit
-# Allocate 1024 hugepages (2MB each)
-echo 1024 | sudo tee /proc/sys/vm/nr_hugepages
-
-# Mount hugepage filesystem
+```bash
 sudo mkdir -p /mnt/huge
 sudo mount -t hugetlbfs nodev /mnt/huge
-💡 You can check allocation using: cat /proc/meminfo | grep HugePages
+```
 
-3️⃣ Trace Function Calls with LTTng
-🔹 Create and Start LTTng Session
-bash
-Copy
-Edit
-lttng create dpdk-trace
-lttng enable-event -u -a   # Enable all userspace events
+You can also enable hugepages at boot or dynamically allocate them:
+
+```bash
+echo 2048 | sudo tee /proc/sys/vm/nr_hugepages
+```
+
+## 🚀 Run DPDK Application
+```bash
+sudo LD_PRELOAD=/usr/lib/x86_64-linux-gnu/liblttng-ust-cyg-profile.so ./dpdk-testpmd -l 0-1 --proc-type=primary --file-prefix=pmd1 --vdev=net_memif,role=server -- -i
+sudo LD_PRELOAD=/usr/lib/x86_64-linux-gnu/liblttng-ust-cyg-profile.so ./dpdk-testpmd -l 2-3 --proc-type=primary --file-prefix=pmd2 --vdev=net_memif -- -i
+
+## 🔍 Enable LTTng Tracing
+
+Create a new LTTng tracing session and enable function instrumentation with this script file:
+
+```bash
+#!/bin/bash
+
+set -e
+
+error_handler()
+{
+        echo -e "An error occured in the script\n"
+        lttng destroy
+        exit 1
+}
+
+if [ "$(id -u)" -ne 0 ];
+then
+        echo -e "permission denied.\nneeds root previlliged" >&2
+        exit 1
+fi
+
+trap error_handler ERR
+
+rm -rf output && mkdir output
+
+lttng create session1 --output=./output
+
+lttng enable-channel --userspace --num-subbuf=4 --subbuf-size=64M channel0
+
+lttng enable-event --channel channel0 --userspace --all
+
+for context in 'procname' 'vtid' 'vpid' 'perf:thread:cpu-cycles' 'perf:thread:instructions' 'perf:thread:cache-misses'; 
+# for context in 'procname' 'vtid' 'vpid' 'perf:thread:instructions'; 
+do
+        lttng add-context --channel channel0 --userspace --type="$context"
+done
+
 lttng start
-🔹 Run Your DPDK Application
-bash
-Copy
-Edit
-./builddir/examples/dpdk-l2fwd &
-sleep 5  # Wait for a few seconds of execution
-🔹 Stop and View Trace
-bash
-Copy
-Edit
+
+sleep 0.25
+
+lttng destroy
+
+```
+
+## 🚀 Run DPDK Application
+```bash
 lttng stop
-lttng view
-📁 Traces are saved under ~/.lttng/trace/ by default.
+lttng destroy
+```
 
-4️⃣ (Optional) Unmount HugePages
-bash
-Copy
-Edit
-sudo umount /mnt/huge
-📊 Visualizing Traces
-You can analyze the generated trace using Trace Compass:
+## 📊 View Traces
 
-bash
-Copy
-Edit
-sudo snap install trace-compass
-Then open the trace folder and explore function-level execution.
+Use `babeltrace` to read and analyze the trace logs:
 
-📁 Project Structure
-bash
-Copy
-Edit
-dpdk-tracing/
-├── dpdk/                   # Cloned DPDK source
-├── builddir/               # Build output (Meson/Ninja)
-├── README.md               # This documentation
-└── traces/                 # (Optional) LTTng trace output
-🧪 Automating Setup
-You can optionally create a trace_dpdk.sh script to automate the process of setup, mount, trace, and run. See README for step-by-step commands.
+```bash
+babeltrace ~/lttng-traces/dpdk-trace-*
+```
 
-📬 Contact
+## 📂 Project Structure
+
+```
+.
+├── dpdk/                    # Cloned DPDK source
+│   └── debugbuildtrace/    # Build directory with instrumented binaries
+├── README.md                # This file
+```
+
+## 🧪 Optional: Save to Script
+
+You can automate the steps using a Bash script:
+
+```bash
+#!/bin/bash
+
+# Build DPDK
+git clone https://github.com/DPDK/dpdk.git
+cd dpdk
+meson setup --buildtype=debug -Dexamples=all debugbuildtrace
+cd debugbuildtrace
+meson configure -Dc_args="-finstrument-functions"
+ninja
+
+# Mount hugepages
+sudo mkdir -p /mnt/huge
+sudo mount -t hugetlbfs nodev /mnt/huge
+echo 2048 | sudo tee /proc/sys/vm/nr_hugepages
+
+# Start LTTng tracing
+lttng create dpdk-trace
+lttng enable-event -k --function '*'
+lttng start
+
+# Run your app (change this as needed)
+sudo ./examples/dpdk-l2fwd
+
+# Stop tracing
+lttng stop
+lttng destroy
+```
+
+## 📬 Contact
+
 For issues or improvements, feel free to open an issue or pull request.
+
+
