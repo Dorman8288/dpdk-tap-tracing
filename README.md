@@ -1,12 +1,13 @@
 # DPDK Tracing with LTTng
 
-This project focuses on enabling **LTTng** (Linux Trace Toolkit Next Generation) function tracing on **DPDK** (Data Plane Development Kit) by building it against the `liblttng-ust-cyg-profile.so` shared library.This library enables lttng to trace every function call by raising an event at the start and end of every fucntion in the compiled binary. We will collect function-level traces during the execution of different **testpmd scenarios**, including initial setup and traffic forwarding. After collecting the traces, we will analyze them using **TraceCompass**, focusing on metrics like **latency**, **function frequency**, and **cache/cycles/instructions** from function entry to exit.
+This project focuses on enabling **LTTng** (Linux Trace Toolkit Next Generation) function tracing on **DPDK** (Data Plane Development Kit) by building it against the `liblttng-ust-cyg-profile.so` shared library.This library enables lttng to trace every function call by raising an event at the start and end of every fucntion in the compiled binary. We will collect function-level traces during the execution of different **testpmd scenarios**, including initial setup and traffic forwarding and filtering using tap devices. After collecting the traces, we will analyze them using **TraceCompass**, focusing on metrics like **latency**, **function frequency**, and **cache/cycles/instructions** from function entry to exit.
 
 The steps include:
 
 1. Setting up LTTng and dpdk.
 2. Running **testpmd** commands with function tracing enabled.
-3. Analyzing trace data using **TraceCompass**.
+3. adding tap device interfaces to the testmpd and adding flow rules.
+4. Analyzing trace data using **TraceCompass**.
 
 
 ## 📦 Prerequisites
@@ -95,43 +96,26 @@ Run DPDK in **server mode** on cores `0-1`:
 
 ```bash
 export LD_PRELOAD=/usr/lib64/liblttng-ust-cyg-profile.so
-
-/home/amdor/code/kernel_function_tracing/project/dpdk/build/app/dpdk-testpmd -l 0-1 --proc-type=primary --file-prefix=pmd1 --vdev=net_memif,role=server -- -i
+sudo ./dpdk-testpmd -l 0-1 -n 4 \
+  --vdev=net_tap0,iface=tap0 \
+  --vdev=net_tap1,iface=tap1 -- -i --rxd=1024 --txd=1024 --rxq=2 --txq=2 --port-topology=chained
 ```
 
-Run DPDK in **client mode** on cores `2-3`:
-
+now we should add the following flow rules:
 ```bash
-export LD_PRELOAD=/usr/lib64/liblttng-ust-cyg-profile.so
-
-/home/amdor/code/kernel_function_tracing/project/dpdk/build/app/dpdk-testpmd  -l 2-3 --proc-type=primary --file-prefix=pmd2 --vdev=net_memif -- -i
+testpmd> flow create 0 ingress pattern eth / ipv4 / tcp / end actions queue index 0 / end
+testpmd> flow create 0 ingress pattern eth / ipv4 / udp / end actions queue index 1 / end
 ```
+one for tcp traffic and one for udp traffic.
 
-now do the steps blow in the defined order
+then using tcpdump capture traffic on one of your active interfaces and save it in a pcap file. 
+then input this pcap file to the tap 0 interface using the tcpreplay application. (you may have to recompile tcpreplay for tap functionality to work.)
+then use the start command on the testmpd and watch the tap 1 interface with tshark to make sure testmpd is forwarding the packets.
 
- 1. run start on client
- 2. run start tx_first on server
- 3. check that the packets are flowing through the network using command "show port stats 0"
- 4. run the trace script
- 5. quit the server and client.
 ---
 
 ## 📊 Analyze the Results
 ![Alt text](./1l.png)
-![Alt text](./2.png)
-![Alt text](./3.png)
-![Alt text](./4.png)
-![Alt text](./5.png)
-![Alt text](./6.png)
 ---
 
-## Conclusion
-
-
----
-
-## References
-
-
----
 
